@@ -21,7 +21,7 @@ if(NOT COUCHSYNC_BUILD_APP)
 endif()
 
 # ---- Qt ---------------------------------------------------------------------
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 OpenGL)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 OpenGL Network)
 qt_standard_project_setup(REQUIRES 6.5)
 
 # ---- libmpv -----------------------------------------------------------------
@@ -61,12 +61,23 @@ qt_add_qml_module(couchsync
     qml/FlatButton.qml
     qml/FlatSlider.qml
     qml/TrackPopup.qml
-  SOURCES src/player/MpvItem.h src/player/MpvItem.cpp
+    qml/FlatField.qml
+    qml/FlatCheck.qml
+    qml/JoinDialog.qml
+    qml/RoomPanel.qml
+    qml/ToastHost.qml
+  SOURCES
+    src/player/MpvItem.h src/player/MpvItem.cpp
+    src/player/SyncController.h src/player/SyncController.cpp
+    src/net/RoomClient.h src/net/RoomClient.cpp
+    src/net/WsConn.h src/net/WsConn.cpp
+    src/net/SyncLog.h
 )
 
-target_link_libraries(couchsync PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::OpenGL mpv::mpv couchsync_sync)
-# src/player is needed because the generated qmltyperegistrations.cpp includes "MpvItem.h" by basename.
-target_include_directories(couchsync PRIVATE src src/player)
+target_link_libraries(couchsync PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::OpenGL Qt6::Network mpv::mpv couchsync_sync)
+# src/player and src/net are needed because the generated qmltyperegistrations.cpp includes headers by basename.
+# (Qt WebSockets is not installed locally; src/net/WsConn is a small QSslSocket-based client with a QWebSocket-like API.)
+target_include_directories(couchsync PRIVATE src src/player src/net)
 
 if(MSVC)
   target_compile_options(couchsync PRIVATE /utf-8 /W4)

@@ -25,6 +25,10 @@ class MpvItem : public QQuickFramebufferObject
     Q_PROPERTY(QVariantList tracks READ tracks NOTIFY tracksChanged)
     Q_PROPERTY(double subDelay READ subDelay NOTIFY subDelayChanged)
     Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaTitleChanged)
+    Q_PROPERTY(bool buffering READ buffering NOTIFY bufferingChanged)
+    Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
+    Q_PROPERTY(bool fileLoaded READ fileLoaded NOTIFY fileLoadedChanged)
+    Q_PROPERTY(QString fileName READ fileName NOTIFY fileLoadedChanged)
 
 public:
     explicit MpvItem(QQuickItem *parent = nullptr);
@@ -42,11 +46,22 @@ public:
     QVariantList tracks() const { return m_tracks; }
     double subDelay() const { return m_subDelay; }
     QString mediaTitle() const { return m_mediaTitle; }
+    bool buffering() const { return m_buffering; }
+    double speed() const { return m_speed; }
+    bool fileLoaded() const { return m_fileLoaded; }
+    QString fileName() const { return m_fileName; } // basename of the loaded file (stable, unlike media-title)
 
     // `path` may be a local path, a file:// URL or another URL.
     Q_INVOKABLE void loadFile(const QString &path);
     Q_INVOKABLE void togglePause();
     Q_INVOKABLE void seek(double seconds); // absolute
+    // Used by the sync controller (engine-issued commands).
+    Q_INVOKABLE void setPaused(bool paused);
+    Q_INVOKABLE void setSpeed(double speed);
+    Q_INVOKABLE void seekExact(double seconds); // "seek <s> absolute+exact"
+    // Fresh time-pos read straight from mpv (the observed `position` lags by up to one update);
+    // used for sync sampling.
+    Q_INVOKABLE double currentPosition() const;
     Q_INVOKABLE void setVolume(double volume);
     Q_INVOKABLE void toggleMute();
     Q_INVOKABLE void setAudioTrack(int id);
@@ -76,6 +91,13 @@ signals:
     void tracksChanged();
     void subDelayChanged();
     void mediaTitleChanged();
+    void bufferingChanged();
+    void speedChanged();
+    void fileLoadedChanged();
+    // mpv events, for SyncController.
+    void fileStarted();       // MPV_EVENT_START_FILE
+    void seekStarted();       // MPV_EVENT_SEEK
+    void playbackRestart(double position); // MPV_EVENT_PLAYBACK_RESTART; position = time-pos queried right then
     void shutdown(); // mpv quit (e.g. the "q" key); the UI should close
 
 private:
@@ -93,6 +115,10 @@ private:
     QVariantList m_tracks;
     double m_subDelay = 0.0;
     QString m_mediaTitle;
+    bool m_buffering = false;
+    double m_speed = 1.0;
+    bool m_fileLoaded = false;
+    QString m_fileName;
     bool m_shutdown = false;
     bool m_renderReady = false;
     QString m_pendingFile; // loadfile before the render context exists leaves mpv with no video output

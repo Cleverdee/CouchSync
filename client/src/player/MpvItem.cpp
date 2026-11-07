@@ -298,6 +298,10 @@ MpvItem::MpvItem(QQuickItem *parent)
         mpv_set_option_string(mpv, "watch-later-dir", QDir::toNativeSeparators(dir).toUtf8().constData());
     }
 
+    // Dev/test hook: lets scripts drive mpv out-of-band (e.g. to simulate user pause/seek in smoke tests).
+    if (const QByteArray ipc = qgetenv("COUCHSYNC_MPV_IPC"); !ipc.isEmpty())
+        mpv_set_option_string(mpv, "input-ipc-server", ipc.constData());
+
     if (mpv_initialize(mpv) < 0) {
         qCritical() << "mpv_initialize failed";
         return;
@@ -313,6 +317,8 @@ MpvItem::MpvItem(QQuickItem *parent)
     mpv_observe_property(mpv, 0, "sub-delay", MPV_FORMAT_DOUBLE);
     mpv_observe_property(mpv, 0, "media-title", MPV_FORMAT_STRING);
     mpv_observe_property(mpv, 0, "idle-active", MPV_FORMAT_FLAG);
+    mpv_observe_property(mpv, 0, "paused-for-cache", MPV_FORMAT_FLAG);
+    mpv_observe_property(mpv, 0, "speed", MPV_FORMAT_DOUBLE);
     mpv_set_wakeup_callback(mpv, onMpvWakeup, m_core.get());
 }
 
@@ -359,6 +365,32 @@ void MpvItem::togglePause()
 void MpvItem::seek(double seconds)
 {
     command({"seek", QString::number(seconds, 'f', 3), "absolute"});
+}
+
+void MpvItem::setPaused(bool paused)
+{
+    if (!m_core->mpv || m_shutdown)
+        return;
+    int flag = paused ? 1 : 0;
+    mpv_set_property_async(m_core->mpv, 0, "pause", MPV_FORMAT_FLAG, &flag);
+}
+
+void MpvItem::setSpeed(double speed)
+{
+    setPropertyDouble("speed", speed);
+}
+
+void MpvItem::seekExact(double seconds)
+{
+    command({"seek", QString::number(seconds, 'f', 3), "absolute+exact"});
+}
+
+double MpvItem::currentPosition() const
+{
+    double pos = 0.0;
+    if (m_core->mpv && !m_shutdown && mpv_get_property(m_core->mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos) >= 0)
+        return pos;
+    return m_position;
 }
 
 void MpvItem::setVolume(double volume)
@@ -506,16 +538,56 @@ void MpvItem::processEvents()
                     emit hasMediaChanged();
                     emit playingChanged();
                 }
+            } else if (name == "paused-for-cache") {
+                if (prop->format == MPV_FORMAT_FLAG) {
+                    m_buffering = *static_cast<int *>(prop->data) != 0;
+                    emit bufferingChanged();
+                }
+            } else if (name == "speed") {
+                if (prop->format == MPV_FORMAT_DOUBLE) {
+                    m_speed = *static_cast<double *>(prop->data);
+                    emit speedChanged();
+                }
             } else if (name == "hwdec-current") {
                 const char *value = prop->format == MPV_FORMAT_STRING ? *static_cast<char **>(prop->data) : nullptr;
                 qInfo() << "hwdec-current:" << (value && *value ? value : "(none)");
             }
             break;
         }
+        case MPV_EVENT_START_FILE:
+            emit fileStarted();
+            break;
+        case MPV_EVENT_FILE_LOADED: {
+            char *fn = mpv_get_property_string(mpv, "filename");
+            m_fileName = fn ? QString::fromUtf8(fn) : QString();
+            if (fn)
+                mpv_free(fn);
+            m_fileLoaded = true;
+            emit fileLoadedChanged();
+            break;
+        }
+        case MPV_EVENT_SEEK:
+            emit seekStarted();
+            break;
+        case MPV_EVENT_PLAYBACK_RESTART: {
+            // Query time-pos right now: the observed property may not have been delivered yet.
+            double pos = 0.0;
+            if (mpv_get_property(mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos) >= 0 && pos != m_position) {
+                m_position = pos;
+                emit positionChanged();
+            }
+            emit playbackRestart(m_position);
+            break;
+        }
         case MPV_EVENT_END_FILE: {
             const auto *ef = static_cast<mpv_event_end_file *>(ev->data);
             if (ef->reason == MPV_END_FILE_REASON_ERROR)
                 qWarning() << "playback error:" << mpv_error_string(ef->error);
+            if (m_fileLoaded) {
+                m_fileLoaded = false;
+                m_fileName.clear();
+                emit fileLoadedChanged();
+            }
             break;
         }
         case MPV_EVENT_SHUTDOWN:

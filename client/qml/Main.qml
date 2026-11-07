@@ -8,13 +8,23 @@ ApplicationWindow {
     id: root
 
     property string startupFile: ""
+    // Command-line room automation (see main.cpp).
+    property string cliServer: ""
+    property string cliCreateName: ""
+    property string cliJoinCode: ""
+    property string cliJoinName: ""
+    property string cliPassword: ""
+    property bool logSync: false
+
+    property bool panelOpen: false
+    property bool showSync: false
 
     readonly property bool fullscreen: visibility === Window.FullScreen
     readonly property var subtitleExts: ["srt", "ass", "ssa", "vtt", "sub"]
 
     // Controls/cursor auto-hide: shown on mouse movement, hidden after 2 s while playing.
     property bool controlsShown: true
-    readonly property bool canHide: mpv.playing && !trackPopup.opened && !bar.hovered
+    readonly property bool canHide: mpv.playing && !trackPopup.opened && !joinDialog.opened && !bar.hovered
                                     && !seekSlider.pressed && !volumeSlider.pressed
     readonly property bool barVisible: controlsShown || !canHide
 
@@ -24,7 +34,8 @@ ApplicationWindow {
     minimumHeight: 360
     visible: true
     color: "black"
-    title: mpv.mediaTitle !== "" ? mpv.mediaTitle + " - CouchSync" : "CouchSync"
+    title: (mpv.mediaTitle !== "" ? mpv.mediaTitle + " - " : "")
+           + (roomClient.connected ? "Room " + roomClient.roomCode + " - " : "") + "CouchSync"
 
     palette {
         window: Theme.bg
@@ -78,7 +89,52 @@ ApplicationWindow {
     }
 
     onCanHideChanged: if (canHide) poke()
-    onClosing: mpv.saveWatchLater()
+    onClosing: {
+        mpv.saveWatchLater()
+        roomClient.leave()
+    }
+
+    function showToast(text, isError) {
+        toastHost.show(text, isError)
+    }
+
+    Component.onCompleted: {
+        const server = cliServer !== "" ? cliServer : roomClient.savedServer
+        if (cliCreateName !== "")
+            roomClient.createRoom(server, cliCreateName, cliPassword)
+        else if (cliJoinCode !== "")
+            roomClient.joinRoom(server, cliJoinName !== "" ? cliJoinName : "Guest", cliJoinCode, cliPassword)
+    }
+
+    RoomClient { id: roomClient }
+
+    SyncController {
+        id: syncCtl
+        player: mpv
+        room: roomClient
+        logSync: root.logSync
+        onToast: text => root.showToast(text, false)
+    }
+
+    Connections {
+        target: roomClient
+        function onJoined() {
+            joinDialog.close()
+            root.panelOpen = true
+            roomPanel.clearChat()
+        }
+        function onLeft() {
+            root.panelOpen = false
+            roomPanel.clearChat()
+        }
+        function onErrorOccurred(code, message) {
+            joinDialog.errorText = message
+            root.showToast(message, true)
+        }
+        function onChatReceived(name, text, mine) {
+            roomPanel.addChat(name, text, mine)
+        }
+    }
 
     Timer {
         id: hideTimer
@@ -109,12 +165,18 @@ ApplicationWindow {
         focus: true
 
         Keys.onPressed: event => {
-            if (trackPopup.opened || openDialog.visible || subDialog.visible)
+            // Only forward keys when the video area itself has the focus; the chat input
+            // and dialogs keep their own keys.
+            if (!keyRoot.activeFocus)
+                return
+            if (trackPopup.opened || openDialog.visible || subDialog.visible || joinDialog.opened)
                 return
             const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
             const alt = (event.modifiers & Qt.AltModifier) !== 0
             root.poke()
-            if (event.key === Qt.Key_O && ctrl) {
+            if (event.key === Qt.Key_D && ctrl) {
+                event.accepted = true // sync readout toggle (Shortcut below); never forwarded to mpv
+            } else if (event.key === Qt.Key_O && ctrl) {
                 openDialog.open()
                 event.accepted = true
             } else if (event.key === Qt.Key_F && !ctrl && !alt) {
@@ -127,6 +189,19 @@ ApplicationWindow {
                 event.accepted = true
             }
         }
+
+        Shortcut {
+            sequence: "Ctrl+D"
+            onActivated: root.showSync = !root.showSync
+        }
+
+        Item {
+            id: videoArea
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            anchors.rightMargin: roomPanel.width // the panel is a sibling of keyRoot, so it can't be an anchor target
 
         MpvItem {
             id: mpv
@@ -145,6 +220,7 @@ ApplicationWindow {
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton
             cursorShape: root.barVisible ? Qt.ArrowCursor : Qt.BlankCursor
+            onPressed: keyRoot.forceActiveFocus()
             onPositionChanged: root.poke()
             onClicked: clickTimer.restart()
             onDoubleClicked: {
@@ -250,6 +326,17 @@ ApplicationWindow {
                         text: mpv.paused || !mpv.hasMedia ? "▶" : "❚❚"
                         onClicked: mpv.togglePause()
                     }
+                    FlatButton {
+                        visible: !roomClient.connected
+                        text: "Watch together"
+                        onClicked: joinDialog.open()
+                    }
+                    FlatButton {
+                        visible: roomClient.connected
+                        text: "Room"
+                        active: root.panelOpen
+                        onClicked: root.panelOpen = !root.panelOpen
+                    }
 
                     Item { Layout.fillWidth: true }
 
@@ -299,6 +386,90 @@ ApplicationWindow {
                 }
             }
         }
+
+        // ---- overlays ---------------------------------------------------------
+        ToastHost {
+            id: toastHost
+            anchors.top: parent.top
+            anchors.topMargin: 16
+            anchors.horizontalCenter: parent.horizontalCenter
+        }
+
+        Text {
+            anchors.centerIn: parent
+            visible: syncCtl.countdown > 0 && roomClient.connected
+            text: syncCtl.countdown
+            color: "white"
+            font.pixelSize: 140
+            font.bold: true
+            style: Text.Outline
+            styleColor: "#aa000000"
+        }
+
+        Column {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.margins: 12
+            spacing: 6
+
+            Rectangle {
+                visible: syncCtl.mediaWarning !== ""
+                width: warnText.implicitWidth + 24
+                height: 30
+                radius: Theme.radius
+                color: "#e6a67a1e"
+                Text {
+                    id: warnText
+                    anchors.centerIn: parent
+                    text: "⚠ " + syncCtl.mediaWarning
+                    color: "white"
+                    font.pixelSize: Theme.fontSize
+                }
+            }
+
+            Rectangle {
+                visible: root.showSync
+                width: syncText.implicitWidth + 20
+                height: 26
+                radius: Theme.radius
+                color: Theme.panel
+                Text {
+                    id: syncText
+                    anchors.centerIn: parent
+                    color: Theme.textDim
+                    font.pixelSize: 12
+                    font.family: "Consolas"
+                    text: roomClient.connected
+                          ? "drift " + (syncCtl.driftMs > 0 ? "+" : "") + syncCtl.driftMs.toFixed(0) + " ms"
+                            + "  RTT " + roomClient.rttMs.toFixed(0) + " ms"
+                            + "  offset " + roomClient.offsetMs.toFixed(0) + " ms"
+                            + (syncCtl.ready ? "" : "  (waiting)")
+                          : "not in a room"
+                }
+            }
+        }
+        } // videoArea
+    }
+
+    RoomPanel {
+        id: roomPanel
+        room: roomClient
+        sync: syncCtl
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: root.panelOpen && roomClient.connected ? 300 : 0
+        visible: width > 0
+        onLeaveRequested: roomClient.leave()
+        onCollapseRequested: { root.panelOpen = false; keyRoot.forceActiveFocus() }
+        onReleaseFocus: keyRoot.forceActiveFocus()
+        onNotify: text => root.showToast(text, false)
+    }
+
+    JoinDialog {
+        id: joinDialog
+        client: roomClient
+        onClosed: keyRoot.forceActiveFocus()
     }
 
     TrackPopup {
