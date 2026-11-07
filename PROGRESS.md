@@ -1,6 +1,6 @@
 # Progress
 
-## Current milestone: M0 — Skeleton
+## M0 — Skeleton: DONE (2026-11-08)
 
 ### Done
 - Server skeleton (`server/`): Node/TS + `ws`, `GET /healthz`, placeholder `welcome` message, `node:test` tests (3 passing), multi-stage Dockerfile.
@@ -9,8 +9,8 @@
 - CI workflow (`.github/workflows/ci.yml`): Windows client build, server tests, Docker build.
 - Local Windows build works (VS 2026, Qt 6.8.3 via aqtinstall in `E:\Qt`, Ninja via pip). Video plays correctly. Hardware decoding confirmed on RX 6600 XT: `hwdec-current: d3d11va-copy`.
 
-### Remaining for M0
-- `git init`, push to GitHub, get CI green (client job and Docker build have never run). **Deferred by the user until there's a basic player (during M1).**
+### CI
+- Repo: https://github.com/Cleverdee/CouchSync. First CI run green (client-windows + server/Docker).
 
 ### Fixes so far
 - `loadFile` is held until mpv's render context exists. Loading earlier left mpv with no video output (audio only).
@@ -24,10 +24,13 @@
 - CMake author warnings (QTP0004, CMP0156) are harmless.
 - Open design questions are listed in docs/DESIGN.md (timeline semantics, protocol gaps, drift hysteresis).
 
-## M1 — Good standalone player (implemented, awaiting manual test)
+## M1 — Good standalone player: DONE (2026-11-08, manually tested by user)
 - Open via Ctrl+O / button / drag-drop / command line; controls bar (play/pause, seek, volume 0–130 + mute, fullscreen, auto-hide after 2 s).
 - Audio/subtitle track popups, external subs (dialog + drop), sub delay ±0.1 s.
 - Qt keys forwarded to mpv default bindings (`keypress`); `f` and Ctrl+O handled by the app.
 - Resume position via mpv watch-later in `<AppData>/CouchSync/CouchSync/watch_later`.
 - Dark Basic-style theme; extras: single click = pause (250 ms delay), wheel = volume.
 - Partial: dropping video + subs together loads the video only.
+
+## Next: M2 — Rooms + sync (same file)
+- Write docs/PROTOCOL.md first; resolve open design questions (drift hysteresis, hello/welcome payloads, host lock/policy messages).
