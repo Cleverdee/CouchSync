@@ -1,0 +1,34 @@
+# Build
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+vcpkg_installed/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+
+# Server
+server/node_modules/
+server/dist/
+
+# Media / fixtures (never commit)
+*.mkv
+*.mp4
+*.avi
+*.webm
+tests/fixtures/media/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Client
+client/third_party/
+client/build/
+
+# Logs
+*.log

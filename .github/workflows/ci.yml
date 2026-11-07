@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  client-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Fetch libmpv
+        shell: pwsh
+        run: ./client/tools/fetch-mpv.ps1
+
+      - name: Configure
+        working-directory: client
+        run: cmake --preset windows-msvc
+
+      - name: Build
+        working-directory: client
+        run: cmake --build --preset windows-msvc-release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: couchsync-windows-x64
+          path: client/build/windows-msvc/Release
+          if-no-files-found: error
+
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+      - name: Docker build
+        working-directory: .
+        run: docker build -t couchsync-server server
