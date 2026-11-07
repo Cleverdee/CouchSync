@@ -32,5 +32,6 @@
 - Dark Basic-style theme; extras: single click = pause (250 ms delay), wheel = volume.
 - Partial: dropping video + subs together loads the video only.
 
-## Next: M2 — Rooms + sync (same file)
-- Write docs/PROTOCOL.md first; resolve open design questions (drift hysteresis, hello/welcome payloads, host lock/policy messages).
+## M2 — Rooms + sync (same file): IN PROGRESS
+- Done: docs/PROTOCOL.md v1; server rooms (create/join, state+seq, policy, autopause/resume, chat, limits; 29 tests); Qt-free sync core `client/src/sync` (ClockSync, RoomState, SyncEngine; 100 checks incl. closed-loop sim; ctest in CI).
+- Next: RoomClient (Qt WebSockets) + wire SyncEngine into the player + room panel UI; headless network simulator in CI; two-PC full-movie test.

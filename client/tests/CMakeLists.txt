@@ -1,0 +1,8 @@
+add_executable(test_sync test_sync.cpp)
+target_link_libraries(test_sync PRIVATE couchsync_sync)
+if(MSVC)
+  target_compile_options(test_sync PRIVATE /utf-8 /W4)
+else()
+  target_compile_options(test_sync PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME test_sync COMMAND test_sync)

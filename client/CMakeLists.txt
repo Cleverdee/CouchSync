@@ -5,6 +5,22 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(COUCHSYNC_BUILD_TESTS "Build the Qt-free unit tests" ON)
+option(COUCHSYNC_BUILD_APP "Build the Qt app (requires Qt 6 and libmpv)" ON)
+
+# ---- Qt-free core (must not depend on Qt) -------------------------------------
+add_subdirectory(src/sync)
+
+if(COUCHSYNC_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+
+if(NOT COUCHSYNC_BUILD_APP)
+  return()
+endif()
+
+# ---- Qt ---------------------------------------------------------------------
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 OpenGL)
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -48,7 +64,7 @@ qt_add_qml_module(couchsync
   SOURCES src/player/MpvItem.h src/player/MpvItem.cpp
 )
 
-target_link_libraries(couchsync PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::OpenGL mpv::mpv)
+target_link_libraries(couchsync PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::OpenGL mpv::mpv couchsync_sync)
 # src/player is needed because the generated qmltyperegistrations.cpp includes "MpvItem.h" by basename.
 target_include_directories(couchsync PRIVATE src src/player)
 

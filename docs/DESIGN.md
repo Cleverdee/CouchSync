@@ -214,3 +214,7 @@ Dual-audio files are common (e.g. Hindi + English tracks). Fingerprints only mat
 - 2026-11-08: Public GitHub repo; build moves to Claude Code.
 - 2026-11-08: Qt comes from the Qt installer / aqtinstall (locally) and install-qt-action (CI), not vcpkg — building Qt via vcpkg is too slow. vcpkg stays for other C++ deps (Chromaprint, FFmpeg, libdatachannel).
 - 2026-11-08: libmpv on Windows from a pinned shinchiro build (`client/tools/fetch-mpv.ps1`), MSVC import lib generated from its exports.
+- 2026-11-08: v1 room timeline = the host's file (open question 5 deferred; revisit when host file-switching is needed).
+- 2026-11-08: Drift correction has a buffer: start speed correction when |drift| > 40 ms, stop when |drift| < 15 ms. Speed = 1 − clamp(k·drift, ±5%) with k = 0.5/s. Seek when |drift| > 2 s, targeting expected + predicted seek time (EMA of measured seek durations, initial 300 ms, clamped to 0–2 s). No correction while seeking or buffering. Wait 500 ms after a seek before re-evaluating. Drift is smoothed by a median of the last 5 samples.
+- 2026-11-08: Host controls in the protocol: `intent.setPolicy` (host only), `policy` in room state, defined `hello`/`welcome` payloads. Full schema in docs/PROTOCOL.md.
+- 2026-11-08: Right after a room state change (remote seek/play/join), seek if |drift| > 0.5 s (`jumpSeekThresholdS`) instead of waiting for 2 s. Otherwise a 1 s remote jump would take ~20 s to catch up by speed. Gradual drift still uses speed up to 2 s.
