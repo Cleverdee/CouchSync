@@ -33,5 +33,11 @@
 - Partial: dropping video + subs together loads the video only.
 
 ## M2 — Rooms + sync (same file): IN PROGRESS
-- Done: docs/PROTOCOL.md v1; server rooms (create/join, state+seq, policy, autopause/resume, chat, limits; 29 tests); Qt-free sync core `client/src/sync` (ClockSync, RoomState, SyncEngine; 100 checks incl. closed-loop sim; ctest in CI).
-- Next: RoomClient (Qt WebSockets) + wire SyncEngine into the player + room panel UI; headless network simulator in CI; two-PC full-movie test.
+- Done: docs/PROTOCOL.md v1; server rooms (29 tests); Qt-free sync core `client/src/sync` (100 checks incl. closed-loop sim; ctest in CI); client integration: `src/net/WsConn` (custom RFC 6455 client), `RoomClient`, `src/player/SyncController` (local-vs-engine action detection), join dialog, room panel, toasts, countdown, Ctrl+D sync readout.
+- CLI for testing: `couchsync [file] --server URL --create NAME | --join CODE NAME [--password PW] [--log-sync]`. Run the server with `cd server && npm start` (port 8787).
+- Next:
+  1. User manual test: two instances on one PC with the same file (checklist in the session; watch the Ctrl+D drift).
+  2. Investigate the drift bias: on a silent 8 kHz WAV, drift sat at about −25 ms with speed 1.012 and didn't close (steady-state error). Check with real video first.
+  3. Swap WsConn for QtWebSockets (needs `aqt install-qt ... -m qtwebsockets` locally plus `modules: qtwebsockets` in CI). Waiting on the user's OK for the download.
+  4. Headless network simulator (latency/jitter/skew/loss) in CI.
+  5. Two-PC test over the internet. This needs a reachable server (port-forward, tunnel, or VPS).
