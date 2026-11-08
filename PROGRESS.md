@@ -41,3 +41,6 @@
   3. Swap WsConn for QtWebSockets (needs `aqt install-qt ... -m qtwebsockets` locally plus `modules: qtwebsockets` in CI). Waiting on the user's OK for the download.
   4. Headless network simulator (latency/jitter/skew/loss) in CI.
   5. Two-PC test over the internet. This needs a reachable server (port-forward, tunnel, or VPS).
+
+## After M2 (agreed)
+- Release workflow (tag `v*` → build → GitHub Release with zip + SHA256) and in-app update-available banner. Full auto-update comes in M6.

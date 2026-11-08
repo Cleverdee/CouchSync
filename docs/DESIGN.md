@@ -202,7 +202,7 @@ Dual-audio files are common (e.g. Hindi + English tracks). Fingerprints only mat
 3. Voice chat in v1 or later?
 4. License: GPL-3.0 proposed (simplest with mpv/FFmpeg GPL builds). Confirm.
 5. Should the host's file be the room timeline, or should the room timeline be "the movie" so the host can change files mid-session?
-6. Auto-updates (Windows installer + updater) for v1?
+6. ~~Auto-updates (Windows installer + updater) for v1?~~ Yes, see the Decisions log (2026-11-08).
 
 ---
 
@@ -218,3 +218,4 @@ Dual-audio files are common (e.g. Hindi + English tracks). Fingerprints only mat
 - 2026-11-08: Drift correction has a buffer: start speed correction when |drift| > 40 ms, stop when |drift| < 15 ms. Speed = 1 − clamp(k·drift, ±5%) with k = 0.5/s. Seek when |drift| > 2 s, targeting expected + predicted seek time (EMA of measured seek durations, initial 300 ms, clamped to 0–2 s). No correction while seeking or buffering. Wait 500 ms after a seek before re-evaluating. Drift is smoothed by a median of the last 5 samples.
 - 2026-11-08: Host controls in the protocol: `intent.setPolicy` (host only), `policy` in room state, defined `hello`/`welcome` payloads. Full schema in docs/PROTOCOL.md.
 - 2026-11-08: Right after a room state change (remote seek/play/join), seek if |drift| > 0.5 s (`jumpSeekThresholdS`) instead of waiting for 2 s. Otherwise a 1 s remote jump would take ~20 s to catch up by speed. Gradual drift still uses speed up to 2 s.
+- 2026-11-08: Auto-updates in v1. Right after M2: tag-triggered GitHub Release workflow plus an in-app "new version available" banner (GitHub releases API). M6: full one-click/silent update on top of the installer, with checksum verification.
