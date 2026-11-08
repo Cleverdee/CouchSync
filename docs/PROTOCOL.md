@@ -44,7 +44,7 @@ Status: M2. Source of truth for client ↔ server messages. Change this file in 
 - `ping` (C→S): `{"type":"ping","t0":<client local ms>}`
 - `pong` (S→C): `{"type":"pong","t0":<echoed>,"t1":<server recv>,"t2":<server send>}`
 - The client records `t3` on receipt. `offset = ((t1 - t0) + (t2 - t3)) / 2`, `rtt = (t3 - t0) - (t2 - t1)`.
-- Client sends 8 pings ~50 ms apart after `welcome`, then one every 5 s. It keeps the last 16 samples and uses the offset of the lowest-RTT sample. `serverNow = localSteadyMs + offset`.
+- Client sends 8 pings ~50 ms apart after `welcome`, then one every 5 s. Client-side estimation (not part of the wire protocol; see `client/src/sync/ClockSync.h`): it keeps the last 32 samples (≤ 3 min) and fits `offset(t) = a + b·(t − tm)` (b = clock skew) by weighted least squares over the sample midpoints `(t0 + t3) / 2`, weighting low-RTT samples most. `serverNow = localSteadyMs + offset(localSteadyMs)`.
 - Client local time must be `std::chrono::steady_clock`.
 
 ## Room state

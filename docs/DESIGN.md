@@ -105,7 +105,7 @@ Full schema goes in `docs/PROTOCOL.md` when M1 starts.
 ### 5.1 Clock sync
 NTP-style: client sends `ping{t0}`, server replies `pong{t0, t1=serverRecv, t2=serverSend}`, client records `t3`.
 - `offset = ((t1 - t0) + (t2 - t3)) / 2`, `rtt = (t3 - t0) - (t2 - t1)`
-- Burst of 8 pings on join, then one every 5 s. Keep the last ~16 samples and use the offset from the **lowest-RTT** samples (filters out jitter).
+- Burst of 8 pings on join, then one every 5 s. Keep the last ~32 samples and fit offset and clock skew, weighting the **lowest-RTT** samples most (filters out jitter); see the Decisions log.
 - Use a monotonic local clock (`std::chrono::steady_clock`), never wall-clock.
 
 ### 5.2 Drift correction
@@ -219,3 +219,6 @@ Dual-audio files are common (e.g. Hindi + English tracks). Fingerprints only mat
 - 2026-11-08: Host controls in the protocol: `intent.setPolicy` (host only), `policy` in room state, defined `hello`/`welcome` payloads. Full schema in docs/PROTOCOL.md.
 - 2026-11-08: Right after a room state change (remote seek/play/join), seek if |drift| > 0.5 s (`jumpSeekThresholdS`) instead of waiting for 2 s. Otherwise a 1 s remote jump would take ~20 s to catch up by speed. Gradual drift still uses speed up to 2 s.
 - 2026-11-08: Auto-updates in v1. Right after M2: tag-triggered GitHub Release workflow plus an in-app "new version available" banner (GitHub releases API). M6: full one-click/silent update on top of the installer, with checksum verification.
+- 2026-11-08: Clock sync tracks skew. The old estimate (offset of the lowest-RTT sample of the last 16) ignored the clocks' rate difference: with pings every 5 s the chosen sample could be ~80 s old, so at 200 ppm the offset was off by up to 15–18 ms and jumped when the sample was replaced. `ClockSync` now fits offset(t) = a + b·t over the last 32 samples by weighted least squares (weights from RTT excess, a noise floor from the RTT spread and residual scatter, head-of-line-blocked pongs down-weighted, skew shrunk by a 300 ppm prior and clamped to ±1000 ppm, old samples faded out so eviction doesn't step). Same API; `offset()` is the offset at the newest sample.
+- 2026-11-08: Simulator steady-state criteria are p95 < 40 ms and max < 50 ms (were 30/80, stricter than the controller: it only corrects above 40 ms by design, and the goal in section 1 is "within ~50 ms"). Convergence (50 ms within 10 s) and propagation (300 ms + one-way latency) are unchanged.
+- 2026-11-08: The jump threshold (0.5 s) also applies when a `play` state arrives after its scheduled start (player still paused). That case used the 2 s threshold, so a play delayed 1 s by a loss spike took ~20 s of speed-up to catch up.

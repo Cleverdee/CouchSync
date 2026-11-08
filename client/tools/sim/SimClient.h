@@ -75,7 +75,7 @@ private:
 };
 
 // Direct (unimpaired) connection that observes the room. It provides the ground truth: the room
-// state exactly as the server holds it, and a precise server clock (lowest-RTT ping over loopback).
+// state exactly as the server holds it, and a precise server clock (pings every 500 ms over loopback).
 class RefObserver : public SimConn
 {
     Q_OBJECT

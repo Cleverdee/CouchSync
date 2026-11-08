@@ -42,5 +42,10 @@
   4. Headless network simulator (latency/jitter/skew/loss) in CI.
   5. Two-PC test over the internet. This needs a reachable server (port-forward, tunnel, or VPS).
 
+- Sync-core fixes from the headless simulator (`couchsync_sim`):
+  - `ClockSync` is skew-aware (weighted LS line fit over 32 samples; see DESIGN Decisions log). Unit tests: ±200/−300/0 ppm over 10 min with 0..6 ms queueing jitter + 3 % spikes: max error < 1.8 ms after the first minute, max step per new sample < 0.8 ms. In the sim's uniform ±30 ms jitter the clock error is still ~3–5 ms rms (that jitter model is pessimistic: low RTT says little about path symmetry).
+  - Sim steady-state limits now p95 < 40 / max < 50 ms (DESIGN). `SyncEngine`: jump threshold also for a late-arriving `play`.
+  - Default scenario: 29/30 seeds pass (seeds 1–30). Known failure: seed 6, where a ~1 s loss spike on the first pong holds back all 8 burst pongs (TCP head-of-line), so c2 starts play with a −400 ms clock until the 5 s ping. Fix idea (needs a decision, it changes client ping behaviour in PROTOCOL.md): keep bursting until a few non-queued samples arrive, or treat the clock as not ready until then.
+
 ## After M2 (agreed)
 - Release workflow (tag `v*` → build → GitHub Release with zip + SHA256) and in-app update-available banner. Full auto-update comes in M6.

@@ -4,6 +4,7 @@
 #include "RoomState.h"
 #include "SyncEngine.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -75,37 +76,179 @@ static void testClockSync()
     }
     {
         // Asymmetric jittery samples have offset error (up - down) / 2; the
-        // low-RTT sample (5/7 ms) must win.
+        // low-RTT sample (5/7 ms) must dominate. (With min-RTT selection this
+        // expected the exact offset; the weighted fit lets the high-RTT samples
+        // contribute a few hundredths of a ms.)
         ClockSync c;
         sample(c, 0, 80, 10);     // err +35
         sample(c, 100, 10, 120);  // err -55
         sample(c, 200, 5, 7);     // err -1, rtt 12
         sample(c, 300, 60, 30);   // err +15
         sample(c, 400, 200, 15);  // err +92
-        CHECK_NEAR(c.offset(), trueOffset - 1, 1e-9);
+        CHECK_NEAR(c.offset(), trueOffset - 1, 1.0);
         CHECK_NEAR(c.rtt(), 12, 1e-9);
 
         // A naive mean of the offsets would be badly off.
         CHECK(!c.addSample(0, 10, 5, -100));  // negative rtt rejected
-        CHECK_NEAR(c.offset(), trueOffset - 1, 1e-9);
+        CHECK_NEAR(c.offset(), trueOffset - 1, 1.0);
     }
     {
-        // Window is 16: the best sample falls out after 16 newer ones.
+        // Eviction is gradual: a lone good sample loses its influence while it
+        // ages through the oldest ranks of the window instead of dropping out in
+        // one step. (Replaces "window is 16: the best sample's eviction steps the
+        // offset by 10 ms", which tested the old min-RTT selection.)
         ClockSync c;
         sample(c, 0, 1, 1);  // rtt 2, exact
-        for (int i = 1; i <= 15; ++i)
+        double prev = 0, maxStep = 0;
+        for (int i = 1; i <= 40; ++i) {
             sample(c, i * 100.0, 30, 10);  // rtt 40, err +10
-        CHECK(c.sampleCount() == 16);
-        CHECK_NEAR(c.offset(), trueOffset, 1e-9);  // still the rtt-2 sample
-        sample(c, 1600, 30, 10);                   // 17th sample evicts it
-        CHECK(c.sampleCount() == 16);
-        CHECK_NEAR(c.offset(), trueOffset + 10, 1e-9);
+            if (i > 1)
+                maxStep = std::max(maxStep, std::abs(c.offset() - prev));
+            prev = c.offset();
+            if (i == 20)
+                CHECK_NEAR(c.offset(), trueOffset, 1.0);  // still dominated by the rtt-2 sample
+        }
+        CHECK(c.sampleCount() == ClockSync::kWindow);
+        CHECK_NEAR(c.offset(), trueOffset + 10, 1e-6);  // gone: only the err +10 samples are left
         CHECK_NEAR(c.rtt(), 40, 1e-9);
+        std::printf("  lone good sample fading out: max offset step per sample %.2f ms\n", maxStep);
+        CHECK(maxStep < 2.5);  // 10 ms total change spread over the taper
+    }
+    {
+        // Zero skew: the slope stays 0 and serverNow extrapolates exactly.
+        ClockSync c;
+        for (int i = 0; i < 20; ++i)
+            sample(c, i * 100.0, 10, 10);
+        CHECK_NEAR(c.skewPpm(), 0, 1e-6);
+        CHECK_NEAR(c.serverNow(1e6), 1e6 + trueOffset, 1e-6);
+        c.reset();
+        CHECK(!c.hasEstimate());
+        CHECK(c.sampleCount() == 0);
     }
     {
         const double a = steadyNowMs();
         const double b = steadyNowMs();
         CHECK(b >= a);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ClockSync with clock skew, on the app's ping schedule (8 pings 50 ms apart,
+// then one every 5 s) over 10 minutes. One-way delays are base + queueing
+// jitter (0..jitterMs, skewed towards 0 like real queueing; default 0..6 ms, a
+// decent home connection), and a fraction of the packets gets a 200-1000 ms
+// one-sided delay spike. The error scales with the jitter: the heavy case below
+// and the sim's uniform +-30 ms per-direction jitter are several times worse.
+// The estimate is checked against true server time every 100 ms (between
+// pings, so the extrapolation is tested too), and the step in serverNow caused
+// by each new sample is recorded.
+struct SkewRunResult {
+    double maxErrFirstMin = 0;  // ms, first 60 s
+    double maxErr = 0;          // ms, after 60 s
+    double meanAbsErr = 0;      // ms, after 60 s
+    double maxStep = 0;         // ms, serverNow change caused by one new sample, after 60 s
+    double skewPpm = 0;         // final estimate
+};
+
+static SkewRunResult runSkew(double skewPpm, std::uint64_t seed, double baseMs = 25, double jitterMs = 6,
+                             double spikeP = 0.03)
+{
+    Rng rng(seed);
+    ClockSync c;
+    const double localEpoch = 5.0e6, serverEpoch = 1.0e9;
+    auto localAt = [&](double rt) { return rt * (1 + skewPpm * 1e-6) + localEpoch; };
+    auto serverAt = [&](double rt) { return rt + serverEpoch; };
+    auto delay = [&]() {
+        const double u = rng.uni();
+        double d = baseMs + jitterMs * u * u;  // mostly small queueing delay, sometimes up to +jitter
+        if (rng.uni() < spikeP)
+            d += 200 + 800 * rng.uni();
+        return d;
+    };
+    struct Pending {
+        double t0, t1, t2, recvRt;
+    };
+    std::vector<Pending> inflight;
+    std::vector<double> sends;
+    for (int i = 0; i < 8; ++i)
+        sends.push_back(i * 50.0);
+    for (double t = 5000; t <= 600000; t += 5000)
+        sends.push_back(t);
+    for (double rt : sends) {
+        const double up = delay(), down = delay();
+        Pending p;
+        p.t0 = localAt(rt);
+        p.t1 = serverAt(rt + up);
+        p.t2 = p.t1 + 0.3;
+        p.recvRt = rt + up + 0.3 + down;
+        inflight.push_back(p);
+    }
+    std::sort(inflight.begin(), inflight.end(), [](const Pending &a, const Pending &b) { return a.recvRt < b.recvRt; });
+
+    SkewRunResult r;
+    double errSum = 0;
+    int errN = 0;
+    std::size_t next = 0;
+    for (double rt = 0; rt <= 600000; rt += 100) {
+        while (next < inflight.size() && inflight[next].recvRt <= rt) {
+            const Pending &p = inflight[next++];
+            const double at = localAt(p.recvRt);
+            const bool had = c.hasEstimate();
+            const double before = had ? c.serverNow(at) : 0;
+            c.addSample(p.t0, p.t1, p.t2, at);
+            if (had && p.recvRt > 60000)
+                r.maxStep = std::max(r.maxStep, std::abs(c.serverNow(at) - before));
+        }
+        if (!c.hasEstimate())
+            continue;
+        const double err = std::abs(c.serverNow(localAt(rt)) - serverAt(rt));
+        if (rt < 60000) {
+            r.maxErrFirstMin = std::max(r.maxErrFirstMin, err);
+        } else {
+            r.maxErr = std::max(r.maxErr, err);
+            errSum += err;
+            ++errN;
+        }
+    }
+    r.meanAbsErr = errN ? errSum / errN : 0;
+    r.skewPpm = c.skewPpm();
+    return r;
+}
+
+static void testClockSkew()
+{
+    std::printf("ClockSync skew tracking (10 min, ping every 5 s, 0..6 ms queueing jitter + 3 %% delay spikes)\n");
+    for (double skew : {200.0, -300.0, 0.0}) {
+        double worst = 0, worstFirst = 0, worstStep = 0, worstMean = 0, worstSkewErr = 0;
+        for (std::uint64_t seed = 1; seed <= 5; ++seed) {
+            const SkewRunResult r = runSkew(skew, seed);
+            worst = std::max(worst, r.maxErr);
+            worstFirst = std::max(worstFirst, r.maxErrFirstMin);
+            worstStep = std::max(worstStep, r.maxStep);
+            worstMean = std::max(worstMean, r.meanAbsErr);
+            // Local runs fast by s ppm -> server - local changes by -s/(1+s) per local ms.
+            worstSkewErr = std::max(worstSkewErr, std::abs(r.skewPpm + skew / (1 + skew * 1e-6)));
+        }
+        std::printf("  skew %+4.0f ppm, 5 seeds: max err %.2f ms after 60 s (worst mean %.2f), %.2f ms in the "
+                    "first 60 s; max step per sample %.2f ms; skew estimate off by <= %.1f ppm\n",
+                    skew, worst, worstMean, worstFirst, worstStep, worstSkewErr);
+        CHECK(worst < 2.0);
+        CHECK(worstFirst < 5.0);
+        CHECK(worstStep < 2.0);
+        CHECK(worstSkewErr < 20.0);
+    }
+    {
+        // Heavier network: 80 ms base, 0..20 ms queueing jitter, 5 % spikes.
+        double worst = 0, worstStep = 0;
+        for (std::uint64_t seed = 11; seed <= 15; ++seed) {
+            const SkewRunResult r = runSkew(200, seed, 80, 20, 0.05);
+            worst = std::max(worst, r.maxErr);
+            worstStep = std::max(worstStep, r.maxStep);
+        }
+        std::printf("  heavier jitter (80 ms + 0..20 ms, 5 %% spikes), skew +200 ppm, 5 seeds: max err %.2f ms, max step %.2f ms\n",
+                    worst, worstStep);
+        CHECK(worst < 7.0);
+        CHECK(worstStep < 4.0);
     }
 }
 
@@ -397,6 +540,30 @@ static void testScheduledPlay()
     }
 }
 
+static void testLatePlay()
+{
+    std::printf("sim (d2): a play state that arrives 1 s after its scheduled start -> one seek, not 20 s of speed-up\n");
+    Sim sim(13);
+    RoomState paused;
+    paused.playing = false;
+    paused.position = 50;
+    paused.serverTime = sim.serverTrue();
+    sim.sendState(paused);
+    sim.pos = 50;
+    sim.paused = true;
+    for (int i = 0; i < 10; ++i)
+        sim.step();
+    CHECK(sim.paused);
+
+    // Scheduled start was 1 s ago (delivery delayed by a loss spike).
+    sim.sendState(sim.playingNow(50.0, -1000));
+    const double tConv = sim.runUntilConverged(5000);
+    std::printf("  converged after %.1f s (seeks=%d, clean drift %.1f ms)\n", tConv / 1000, sim.seeks, sim.cleanDrift() * 1000);
+    CHECK(!sim.paused);
+    CHECK(sim.seeks == 1);
+    CHECK(tConv > 0 && tConv <= 5000);
+}
+
 static void testRemotePause()
 {
     std::printf("sim (e): remote pause lands within 40 ms of state.position\n");
@@ -545,6 +712,7 @@ static void testStatus()
 int main()
 {
     testClockSync();
+    testClockSkew();
     testExpectedPosition();
     testSeqOrdering();
     testStatus();
@@ -552,6 +720,7 @@ int main()
     testConvergeBySpeed(500);  // harsh: forces repeated correction episodes
     testConvergeBySeek();
     testScheduledPlay();
+    testLatePlay();
     testRemotePause();
     testSeekEma();
     testLocalIntent();

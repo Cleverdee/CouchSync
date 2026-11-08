@@ -30,8 +30,12 @@ struct Event {
 };
 
 struct Thresholds {
-    double steadyP95Ms = 30;
-    double steadyMaxMs = 80;
+    // Steady-state limits follow docs/DESIGN.md: the drift controller only starts
+    // correcting above 40 ms (Decisions log, "Drift correction has a buffer"), so
+    // steady drift up to ~40 ms is by design, and the success criterion is "within
+    // ~50 ms, no visible stutter". p95 < 40 ms, max < 50 ms.
+    double steadyP95Ms = 40;
+    double steadyMaxMs = 50;
     double convergeMs = 50;       // |true drift| must be below this...
     double convergeWindowS = 10;  // ...within this long after a disruption
     double propagationBaseMs = 300;

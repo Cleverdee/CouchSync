@@ -166,7 +166,10 @@ SyncActions SyncEngine::tick(const PlayerSample &s)
         }
         a.setPaused = false;
         a.driftS = raw;
-        if (canSeek && std::abs(raw) > m_cfg.seekThresholdS)
+        // Right after a state change (e.g. a play that arrived late, after its
+        // scheduled start) the jump threshold applies, as in the playing branch.
+        const double seekAbove = m_jumpPending ? m_cfg.jumpSeekThresholdS : m_cfg.seekThresholdS;
+        if (canSeek && std::abs(raw) > seekAbove)
             issueSeek(a, st.expectedPosition(now + m_predictedSeekMs), now);
         m_jumpPending = false;
         return a;
