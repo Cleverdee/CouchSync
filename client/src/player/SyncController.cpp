@@ -22,6 +22,7 @@ constexpr double kOwnSeekLandToleranceS = 1.5;
 constexpr double kStatusEveryMs = 1000;
 constexpr int kSeekIntentCoalesceMs = 80;
 constexpr double kDurationMismatchS = 2.0;
+constexpr double kMinSpeedStep = 0.006;  // ignore smaller non-neutral speed retargets (see onTick)
 }  // namespace
 
 SyncController::SyncController(QObject *parent) : QObject(parent)
@@ -220,9 +221,18 @@ void SyncController::onTick()
                     .arg(m_engine.predictedSeekMs(), 0, 'f', 0));
     }
     if (a.setSpeed) {
-        m_expectedSpeed = *a.setSpeed;
-        m_player->setSpeed(*a.setSpeed);
-        syncLog(QStringLiteral("action: speed %1").arg(*a.setSpeed, 0, 'f', 3));
+        // Every mpv speed change resets its audio tempo filter and costs a few ms of media time. The
+        // engine re-targets on every tick (the median drift jitters by a few ms because time-pos is
+        // quantized), so applying each target would cancel the correction out: measured in libmpv,
+        // +-0.004 jitter every 100 ms around 1.012 yields a net 1.001. Only apply meaningful changes;
+        // the return to the room's neutral rate is always applied.
+        const double rate = m_room->currentState() ? m_room->currentState()->rate : 1.0;
+        const bool neutral = std::abs(*a.setSpeed - rate) < 1e-9;
+        if (neutral || std::abs(*a.setSpeed - m_expectedSpeed) >= kMinSpeedStep) {
+            m_expectedSpeed = *a.setSpeed;
+            m_player->setSpeed(*a.setSpeed);
+            syncLog(QStringLiteral("action: speed %1").arg(*a.setSpeed, 0, 'f', 3));
+        }
     }
 
     // Status: on change and every second.
