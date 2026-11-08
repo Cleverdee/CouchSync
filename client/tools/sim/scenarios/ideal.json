@@ -1,0 +1,13 @@
+{
+  "name": "ideal",
+  "endAtS": 45,
+  "clients": [
+    { "name": "a-host", "latencyMs": 10 },
+    { "name": "b", "latencyMs": 40 }
+  ],
+  "events": [
+    { "at": 10, "action": "seek", "client": 1, "value": 120 },
+    { "at": 22, "action": "pause", "client": 0 },
+    { "at": 25, "action": "play", "client": 0 }
+  ]
+}

@@ -24,6 +24,12 @@ endif()
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 OpenGL Network)
 qt_standard_project_setup(REQUIRES 6.5)
 
+# ---- headless sync simulator (console app; needs only Qt Core/Network, no libmpv) ---------
+option(COUCHSYNC_BUILD_SIM "Build the headless sync simulator (couchsync_sim)" ON)
+if(COUCHSYNC_BUILD_SIM)
+  add_subdirectory(tools/sim)
+endif()
+
 # ---- libmpv -----------------------------------------------------------------
 set(MPV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mpv" CACHE PATH
     "libmpv dev files (Windows: output of tools/fetch-mpv.ps1)")

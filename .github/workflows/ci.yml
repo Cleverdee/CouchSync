@@ -39,6 +39,42 @@ jobs:
         working-directory: client
         run: ctest --test-dir build/windows-msvc -C Release --output-on-failure
 
+      # Headless sync simulator against the real room server (docs/DESIGN.md, "Testing").
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Build room server
+        working-directory: server
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sync simulator
+        shell: pwsh
+        run: |
+          $env:PORT = '8787'
+          $server = Start-Process node -ArgumentList 'dist/index.js' -WorkingDirectory "$PWD/server" `
+            -PassThru -NoNewWindow -RedirectStandardOutput "$PWD/server.log" -RedirectStandardError "$PWD/server.err.log"
+          try {
+            $up = $false
+            for ($i = 0; $i -lt 50 -and -not $up; $i++) {
+              try { $up = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8787/healthz).StatusCode -eq 200 }
+              catch { Start-Sleep -Milliseconds 200 }
+            }
+            if (-not $up) { throw 'room server did not start' }
+            $sim = Start-Process "$PWD/client/build/windows-msvc/Release/couchsync_sim.exe" `
+              -ArgumentList '--server', 'ws://127.0.0.1:8787/ws' -PassThru -NoNewWindow
+            if (-not $sim.WaitForExit(180000)) { $sim.Kill(); throw 'couchsync_sim timed out' }
+            if ($sim.ExitCode -ne 0) { throw "couchsync_sim failed (exit code $($sim.ExitCode))" }
+          }
+          finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+            Get-Content server.log, server.err.log -ErrorAction SilentlyContinue
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: couchsync-windows-x64
