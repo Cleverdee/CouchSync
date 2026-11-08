@@ -18,9 +18,6 @@ using couchsync::syncLog;
 namespace {
 
 constexpr int kProtocol = 1;
-constexpr int kPingBurst = 8;
-constexpr int kPingBurstIntervalMs = 50;
-constexpr int kPingIntervalMs = 5000;
 
 QString fmtTime(double sec)
 {
@@ -181,7 +178,9 @@ void RoomClient::cleanup(bool emitLeft)
     m_waitingNames.clear();
     m_state.reset();
     m_clock.reset();
-    m_burstLeft = 0;
+    m_pings.reset();
+    m_sendRate.reset();
+    m_pingHeld = false;
     m_pingCount = 0;
     if (wasConnecting)
         emit connectingChanged();
@@ -227,8 +226,10 @@ void RoomClient::onClosed(const QString &reason)
 
 void RoomClient::send(const QJsonObject &obj)
 {
-    if (m_ws && m_ws->isOpen())
+    if (m_ws && m_ws->isOpen()) {
+        m_sendRate.note(couchsync::steadyNowMs());
         m_ws->sendText(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+    }
 }
 
 // ---- incoming ---------------------------------------------------------------------
@@ -276,10 +277,10 @@ void RoomClient::handleWelcome(const QJsonObject &o)
     handleState(o.value(QStringLiteral("state")).toObject(), true);
     emit joined();
 
-    // Ping burst: 8 pings ~50 ms apart, then one every 5 s.
-    m_burstLeft = kPingBurst;
+    // Ping schedule (couchsync::PingSchedule): burst, catch-up until the clock is ready, then steady.
+    m_pings.reset();
     m_pingCount = 0;
-    m_pingTimer.start(kPingBurstIntervalMs);
+    m_pingTimer.start(couchsync::PingSchedule::kBurstMs);
 }
 
 void RoomClient::handleMembers(const QJsonArray &arr)
@@ -441,14 +442,35 @@ void RoomClient::sendPing()
 {
     if (!m_inRoom)
         return;
+    if (!m_pings.mayPing() || !m_sendRate.pingAllowed(couchsync::steadyNowMs())) {  // see PingSchedule::mayPing
+        m_pingHeld = true;
+        m_pingTimer.start(couchsync::PingSchedule::kBurstMs);
+        return;
+    }
+    m_pingHeld = false;
     send(QJsonObject{{QStringLiteral("type"), QStringLiteral("ping")}, {QStringLiteral("t0"), couchsync::steadyNowMs()}});
-    if (m_burstLeft > 0)
-        --m_burstLeft;
-    m_pingTimer.start(m_burstLeft > 0 ? kPingBurstIntervalMs : kPingIntervalMs);
+    const bool wasReady = clockReady();
+    m_pingTimer.start(m_pings.onPingSent(m_clock));
+    if (m_pings.takeExhaustedWarning())
+        syncLog(QStringLiteral("warning: clock estimate not ready after %1 extra pings (rtt=%2 ms); using it anyway")
+                    .arg(couchsync::PingSchedule::kMaxCatchUp)
+                    .arg(m_clock.rtt(), 0, 'f', 1));
+    if (!wasReady && clockReady())
+        emit clockChanged();
 }
 
 void RoomClient::handlePong(const QJsonObject &o)
 {
+    handlePongSample(o);
+    if (m_pingHeld && m_pings.mayPing()) {  // the stall is over: don't wait for the retry timer
+        m_pingTimer.stop();
+        sendPing();
+    }
+}
+
+void RoomClient::handlePongSample(const QJsonObject &o)
+{
+    m_pings.pongReceived();
     const double t3 = couchsync::steadyNowMs();
     const double t0 = o.value(QStringLiteral("t0")).toDouble();
     const double t1 = o.value(QStringLiteral("t1")).toDouble();
@@ -456,12 +478,19 @@ void RoomClient::handlePong(const QJsonObject &o)
     if (!m_clock.addSample(t0, t1, t2, t3))
         return;
     ++m_pingCount;
-    syncLog(QStringLiteral("clock: offset=%1 ms rtt=%2 ms samples=%3 (n=%4)")
+    syncLog(QStringLiteral("clock: offset=%1 ms rtt=%2 ms samples=%3 (n=%4) ready=%5")
                 .arg(m_clock.offset(), 0, 'f', 1)
                 .arg(m_clock.rtt(), 0, 'f', 1)
                 .arg(m_clock.sampleCount())
-                .arg(m_pingCount));
+                .arg(m_pingCount)
+                .arg(clockReady()));
     emit clockChanged();
+    // Spike follow-up: an extra ping soon, unless the next one is due sooner anyway.
+    const double rtt = (t3 - t0) - (t2 - t1);
+    if (const auto d = m_pings.onPong(m_clock, rtt, t3)) {
+        if (!m_pingTimer.isActive() || m_pingTimer.remainingTime() > *d)
+            m_pingTimer.start(*d);
+    }
 }
 
 // ---- outgoing ---------------------------------------------------------------------

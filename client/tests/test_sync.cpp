@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Unit tests + deterministic closed-loop simulation for the Qt-free sync core.
 #include "ClockSync.h"
+#include "PingSchedule.h"
 #include "RoomState.h"
 #include "SyncEngine.h"
 
@@ -124,6 +125,79 @@ static void testClockSync()
         c.reset();
         CHECK(!c.hasEstimate());
         CHECK(c.sampleCount() == 0);
+    }
+    {
+        // isReady(): needs >= 3 clean samples (not head-of-line-blocked, rtt <= best * 1.5 + 10 ms).
+        ClockSync c;
+        CHECK(!c.isReady());
+        // A stalled join burst: 8 pongs sent 50 ms apart, all released together ~1 s later.
+        for (int i = 0; i < 8; ++i) {
+            const double t0 = i * 50.0;
+            c.addSample(t0, t0 + 20 + trueOffset, t0 + 21 + trueOffset, 1100.0 + i);
+        }
+        CHECK(c.hasEstimate());
+        CHECK(!c.isReady());  // at most the first one is clean
+        // Clean pings after the stall make it ready, and it stays so (the stalled ones age out).
+        for (int i = 0; i < 2; ++i) {
+            sample(c, 2000.0 + i * 100.0, 10, 10);
+            CHECK(!c.isReady() || i == 1);
+        }
+        sample(c, 2200, 10, 10);
+        CHECK(c.isReady());
+    }
+    {
+        // One good sample among delay spikes is not enough.
+        ClockSync c;
+        sample(c, 0, 10, 10);
+        for (int i = 1; i < 8; ++i)
+            sample(c, i * 50.0, 200, 10);
+        CHECK(!c.isReady());
+        sample(c, 1000, 10, 11);
+        CHECK(!c.isReady());  // 2 clean
+        sample(c, 1100, 11, 10);
+        CHECK(c.isReady());   // 3 clean
+    }
+    {
+        // Ready after 3 clean samples; stays ready in steady state (5 s pings, a spike now and then).
+        ClockSync c;
+        for (int i = 0; i < 3; ++i) {
+            CHECK(!c.isReady());
+            sample(c, i * 50.0, 10 + i, 10);
+        }
+        CHECK(c.isReady());
+        for (int i = 0; i < 100; ++i) {
+            sample(c, 1000.0 + i * 5000.0, i % 17 == 5 ? 300 : 10 + i % 4, 10);
+            CHECK(c.isReady());
+        }
+    }
+    {
+        // PingSchedule: burst, catch-up while not ready (max 30), steady, spike follow-up.
+        ClockSync c;  // never ready
+        PingSchedule p;
+        for (int i = 1; i < PingSchedule::kBurst; ++i)
+            CHECK(p.onPingSent(c) == PingSchedule::kBurstMs);
+        for (int i = 0; i < PingSchedule::kMaxCatchUp; ++i) {
+            CHECK(!p.usable(c));
+            CHECK(p.onPingSent(c) == PingSchedule::kCatchUpMs);
+        }
+        CHECK(!p.takeExhaustedWarning());
+        CHECK(p.onPingSent(c) == PingSchedule::kSteadyMs);
+        CHECK(p.takeExhaustedWarning());
+        CHECK(!p.takeExhaustedWarning());
+        CHECK(!p.usable(c));  // no estimate at all yet
+        sample(c, 0, 10, 10);
+        CHECK(p.usable(c));   // exhausted + estimate
+        CHECK(!c.isReady());
+        // Outstanding pings: after the burst, no more than kMaxOutstanding unanswered ones.
+        CHECK(!p.mayPing());  // 8 + 30 + 1 sent, no pongs yet
+        for (int i = 0; i < 100; ++i)
+            p.pongReceived();
+        CHECK(p.mayPing());
+        // Follow-up: only for spikes (> 3 * best + 50), at most one per 5 s.
+        CHECK(!p.onPong(c, 100, 0).has_value());
+        CHECK(p.onPong(c, 200, 1000).value_or(0) == PingSchedule::kFollowUpMs);
+        CHECK(!p.onPong(c, 200, 3000).has_value());
+        CHECK(p.onPong(c, 200, 6001).has_value());
     }
     {
         const double a = steadyNowMs();

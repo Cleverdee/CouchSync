@@ -2,6 +2,7 @@
 #pragma once
 
 #include "ClockSync.h"
+#include "PingSchedule.h"
 #include "RoomState.h"
 
 #include <QJsonArray>
@@ -71,6 +72,9 @@ public:
 
     // C++ side (SyncController).
     bool hasClock() const { return m_clock.hasEstimate(); }
+    // The clock estimate is trustworthy enough to act on (see PingSchedule::usable); until then
+    // SyncController reports `waiting` and doesn't start playback.
+    bool clockReady() const { return m_pings.usable(m_clock); }
     double serverNowMs() const { return m_clock.serverNow(couchsync::steadyNowMs()); }
     const std::optional<couchsync::RoomState> &currentState() const { return m_state; }
     double mediaDuration() const { return m_media.value(QStringLiteral("duration")).toDouble(); }
@@ -121,8 +125,8 @@ private:
     void handleMembers(const QJsonArray &arr);
     void handleError(const QJsonObject &o);
     void handlePong(const QJsonObject &o);
+    void handlePongSample(const QJsonObject &o);
     void sendPing();
-    void schedulePing();
     void cleanup(bool emitLeft);
     QString nameOf(const QString &id) const;
     void updateWaitingNames();
@@ -145,6 +149,8 @@ private:
     std::optional<couchsync::RoomState> m_state;
     couchsync::ClockSync m_clock;
     QTimer m_pingTimer;
-    int m_burstLeft = 0;
+    couchsync::PingSchedule m_pings;
+    couchsync::SendRate m_sendRate;
+    bool m_pingHeld = false;  // a ping is being held back (see PingSchedule::mayPing)
     int m_pingCount = 0;
 };

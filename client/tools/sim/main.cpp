@@ -130,6 +130,28 @@ private:
             if (!c->inRoom() || c->clock().sampleCount() < 8 || c->states().isEmpty() || !c->states().last().hasMedia)
                 return;
         }
+        // Everyone joined. Start only once every client reports `ready` (its clock estimate is
+        // ready, file loaded), then wait one more second: people join, then press play later.
+        const double now = realNowMs();
+        if (m_joinedAt == 0)
+            m_joinedAt = now;
+        bool allReady = true;
+        for (SimClient *c : m_clients)
+            allReady = allReady && c->reportedReady();
+        if (!allReady) {
+            m_allReadyAt = 0;
+            if (now - m_joinedAt > 10000) {
+                m_poll.stop();
+                m_done = true;
+                out(QStringLiteral("RESULT: FAIL (1)\n  - clients not all ready within 10 s of joining"));
+                QCoreApplication::exit(1);
+            }
+            return;
+        }
+        if (m_allReadyAt == 0)
+            m_allReadyAt = now;
+        if (now - m_allReadyAt < 1000)
+            return;
         m_poll.stop();
         begin();
     }
@@ -337,7 +359,7 @@ private:
         // Propagation of play / pause / seek.
         out(QStringLiteral("\nPropagation: ms from the server's state change until the client's model reflects it (limit %1 ms + one-way latency;")
                 .arg(th.propagationBaseMs));
-        out(QStringLiteral("  'S' = delivery was delayed by a loss spike, exempt from the limit; the processing time after delivery is still limited to %1 ms):")
+        out(QStringLiteral("  'S' = delivery was delayed by a loss spike, exempt from the limit; 'W' = client was waiting at the broadcast, exempt but must converge within 10 s of becoming ready; the processing time after delivery is still limited to %1 ms):")
                 .arg(th.propagationBaseMs));
         QString ph = QStringLiteral("  %1  %2").arg(QStringLiteral("t(s)"), 6).arg(QStringLiteral("cause"), -10);
         for (int i = 0; i < n; ++i)
@@ -383,6 +405,34 @@ private:
                 const double netDelay = tClient - r.recvRealMs;
                 const double lat = c->spec().latencyMs;
                 const bool spike = netDelay > lat + c->spec().jitterMs + 25;
+                // Only a client that was `ready` when this was broadcast is held to the propagation
+                // limit; a `waiting` one must instead converge within 10 s of becoming ready.
+                const bool wasReady = c->wasReadyAt(r.recvRealMs);
+                if (!wasReady) {
+                    const double tR = c->readyFrom(r.recvRealMs);
+                    bool conv = false;
+                    if (tR >= 0) {
+                        const double wEnd = std::min(tR + th.convergeWindowS * 1000, m_endT);
+                        for (const Sample &s : m_samples[i]) {
+                            if (s.t < tR || s.t > wEnd || std::abs(s.driftMs) >= th.convergeMs)
+                                continue;
+                            bool stays = true;
+                            for (const Sample &s2 : m_samples[i])
+                                if (s2.t > s.t && s2.t <= s.t + 1000 && std::abs(s2.driftMs) >= th.convergeMs) {
+                                    stays = false;
+                                    break;
+                                }
+                            if (stays) {
+                                conv = true;
+                                break;
+                            }
+                        }
+                    }
+                    line += QStringLiteral(" %1W").arg(delay, 8, 'f', 0);
+                    failIf(!conv, QStringLiteral("%1 was waiting at %2 (t=%3 s) and did not converge within %4 s of becoming ready")
+                                      .arg(c->spec().name, r.cause, rel(r.recvRealMs, base).trimmed()).arg(th.convergeWindowS));
+                    continue;
+                }
                 const double limit = th.propagationBaseMs + lat;
                 line += QStringLiteral(" %1%2").arg(delay, 8, 'f', 0).arg(spike ? QLatin1Char('S') : QLatin1Char(' '));
                 failIf(!spike && delay > limit, QStringLiteral("%1: %2 at t=%3 s reflected after %4 ms (limit %5 ms)")
@@ -449,7 +499,7 @@ private:
     QVector<SimClient *> m_clients;
     RefObserver *m_obs = nullptr;
     QTimer m_poll, m_sampler;
-    double m_t0 = 0, m_playStart = 0, m_endT = 0;
+    double m_t0 = 0, m_playStart = 0, m_endT = 0, m_joinedAt = 0, m_allReadyAt = 0;
     QVector<Anchor> m_anchors;
     QVector<double> m_bufferStarts;
     QVector<QVector<Sample>> m_samples;

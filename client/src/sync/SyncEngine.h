@@ -17,7 +17,7 @@ struct SyncConfig {
     double speedGainPerS = 0.5;       // k in speed = rate * (1 - clamp(k * drift, +-maxSpeedDelta))
     double maxSpeedDelta = 0.05;      // +-5 %
     double seekThresholdS = 2.0;      // seek when |smoothed drift| > this
-    double jumpSeekThresholdS = 0.5;  // seek on the first tick after a state change when |raw drift| > this
+    double jumpSeekThresholdS = 0.25;  // seek on the first tick after a state change when |raw drift| > this (0.25-0.5 s by speed took 5-10 s)
     double initialSeekMs = 300;       // initial predicted seek duration
     double seekEmaAlpha = 0.3;        // EMA weight of a new seek-duration measurement
     double maxSeekMs = 2000;          // predicted seek duration is clamped to [0, maxSeekMs]

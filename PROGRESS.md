@@ -35,17 +35,12 @@
 ## M2 — Rooms + sync (same file): IN PROGRESS
 - Done: docs/PROTOCOL.md v1; server rooms (29 tests); Qt-free sync core `client/src/sync` (100 checks incl. closed-loop sim; ctest in CI); client integration: `src/net/WsConn` (custom RFC 6455 client), `RoomClient`, `src/player/SyncController` (local-vs-engine action detection), join dialog, room panel, toasts, countdown, Ctrl+D sync readout.
 - CLI for testing: `couchsync [file] --server URL --create NAME | --join CODE NAME [--password PW] [--log-sync]`. Run the server with `cd server && npm start` (port 8787).
+- Also done: speed retarget rate-limit (fixed stuck −25 ms drift); skew-aware ClockSync (weighted LSQ fit, <2 ms error); adaptive ping burst and clock-ready gating (`PingSchedule`); `jumpSeekThresholdS` 0.25 s; headless simulator `couchsync_sim` in CI (`--seed 1`). Default scenario passes 30/30 seeds, worst steady p95 33 ms.
 - Next:
-  1. User manual test: two instances on one PC with the same file (checklist in the session; watch the Ctrl+D drift).
-  2. Investigate the drift bias: on a silent 8 kHz WAV, drift sat at about −25 ms with speed 1.012 and didn't close (steady-state error). Check with real video first.
-  3. Swap WsConn for QtWebSockets (needs `aqt install-qt ... -m qtwebsockets` locally plus `modules: qtwebsockets` in CI). Waiting on the user's OK for the download.
-  4. Headless network simulator (latency/jitter/skew/loss) in CI.
-  5. Two-PC test over the internet. This needs a reachable server (port-forward, tunnel, or VPS).
-
-- Sync-core fixes from the headless simulator (`couchsync_sim`):
-  - `ClockSync` is skew-aware (weighted LS line fit over 32 samples; see DESIGN Decisions log). Unit tests: ±200/−300/0 ppm over 10 min with 0..6 ms queueing jitter + 3 % spikes: max error < 1.8 ms after the first minute, max step per new sample < 0.8 ms. In the sim's uniform ±30 ms jitter the clock error is still ~3–5 ms rms (that jitter model is pessimistic: low RTT says little about path symmetry).
-  - Sim steady-state limits now p95 < 40 / max < 50 ms (DESIGN). `SyncEngine`: jump threshold also for a late-arriving `play`.
-  - Default scenario: 29/30 seeds pass (seeds 1–30). Known failure: seed 6, where a ~1 s loss spike on the first pong holds back all 8 burst pongs (TCP head-of-line), so c2 starts play with a −400 ms clock until the 5 s ping. Fix idea (needs a decision, it changes client ping behaviour in PROTOCOL.md): keep bursting until a few non-queued samples arrive, or treat the clock as not ready until then.
+  1. User manual test: two instances on one PC with the same file (Ctrl+D drift readout).
+  2. Two-PC test over the internet. This needs a reachable server (port-forward, tunnel, or VPS).
+  3. Swap WsConn for QtWebSockets (needs the user's OK for the download).
+  4. Optional: smoother local position estimate (mpv time-pos has ~10 ms steps and ±15 ms jitter).
 
 ## After M2 (agreed)
 - Release workflow (tag `v*` → build → GitHub Release with zip + SHA256) and in-app update-available banner. Full auto-update comes in M6.

@@ -3,6 +3,7 @@
 
 #include "ClockSync.h"
 #include "Common.h"
+#include "PingSchedule.h"
 #include "RoomState.h"
 #include "Scenario.h"
 #include "SyncEngine.h"
@@ -31,8 +32,8 @@ struct StateRecord {
 
 bool parseStateRecord(const QJsonObject &o, StateRecord &out);
 
-// Common connection logic: hello/welcome, ping-based clock sync (protocol: 8 pings 50 ms apart, then
-// one every 5 s), state tracking. `localNow()` is the client's own (possibly skewed) steady clock.
+// Common connection logic: hello/welcome, ping-based clock sync (couchsync::PingSchedule: burst, catch-up
+// until ready, steady, spike follow-up; same as the app), state tracking. `localNow()` is the client's own (possibly skewed) steady clock.
 class SimConn : public QObject
 {
     Q_OBJECT
@@ -55,7 +56,10 @@ signals:
     void stateAccepted(const sim::StateRecord &rec);
 
 protected:
-    virtual double pingIntervalMs(int pingsSent) const;
+    // Delay until the next ping, called after each one was sent (`pingsSent` includes it).
+    virtual int nextPingDelayMs(int pingsSent);
+    // The clock may be acted on (see couchsync::PingSchedule::usable).
+    bool clockUsable() const { return m_sched.usable(m_clock); }
     virtual void onWelcomeExtra() {}
 
 private:
@@ -69,7 +73,10 @@ private:
     bool m_inRoom = false;
     couchsync::ClockSync m_clock;
     QTimer m_pingTimer;
+    couchsync::PingSchedule m_sched;
+    couchsync::SendRate m_sendRate;
     int m_pingsSent = 0;
+    bool m_pingHeld = false;
     QVector<StateRecord> m_states;
     std::int64_t m_lastSeq = 0;
 };
@@ -91,7 +98,7 @@ public:
     double expectedAt(double realMs) const { return state() ? state()->expectedPosition(serverAt(realMs)) : 0.0; }
 
 protected:
-    double pingIntervalMs(int n) const override { return n < 8 ? 50 : 500; }
+    int nextPingDelayMs(int n) override { return n < 8 ? 50 : 500; }
 };
 
 // One fake participant: protocol client + fake player + the controller loop (same structure as
@@ -122,6 +129,29 @@ public:
     void startBuffering(double ms);
 
     // Stats.
+    // Status the client last reported, and when it changed (real ms), for the runner's checks.
+    bool reportedReady() const { return m_lastReady && *m_lastReady; }
+    bool wasReadyAt(double realMs) const
+    {
+        bool r = false;
+        for (const auto &h : m_readyHistory) {
+            if (h.first > realMs)
+                break;
+            r = h.second;
+        }
+        return r;
+    }
+    // First time at or after realMs when the client reported ready (-1 = never).
+    double readyFrom(double realMs) const
+    {
+        bool r = wasReadyAt(realMs);
+        if (r)
+            return realMs;
+        for (const auto &h : m_readyHistory)
+            if (h.first > realMs && h.second)
+                return h.first;
+        return -1;
+    }
     int engineSeeks() const { return m_engineSeeks; }
     double minSpeed() const { return m_minSpeed; }
     double maxSpeed() const { return m_maxSpeed; }
@@ -164,6 +194,7 @@ private:
     double m_lastAdvance = 0;
 
     std::optional<bool> m_lastReady;
+    QVector<std::pair<double, bool>> m_readyHistory;
     double m_lastStatusAt = -1e9;
     int m_engineSeeks = 0;
     double m_engineDriftMs = 0;

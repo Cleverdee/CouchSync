@@ -60,9 +60,9 @@ SimConn::~SimConn()
         m_ws->shutdown();
 }
 
-double SimConn::pingIntervalMs(int pingsSent) const
+int SimConn::nextPingDelayMs(int)
 {
-    return pingsSent < 8 ? 50 : 5000;
+    return m_sched.onPingSent(m_clock);
 }
 
 void SimConn::connectToRoom(const QString &roomCode)
@@ -85,8 +85,10 @@ void SimConn::connectToRoom(const QString &roomCode)
 
 void SimConn::send(const QJsonObject &o)
 {
-    if (m_ws)
+    if (m_ws) {
+        m_sendRate.note(realNowMs());
         m_ws->sendText(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    }
 }
 
 void SimConn::onText(const QString &text)
@@ -98,6 +100,8 @@ void SimConn::onText(const QString &text)
     if (type == QLatin1String("welcome")) {
         m_roomCode = o.value(QStringLiteral("room")).toString();
         m_inRoom = true;
+        m_sched.reset();
+        m_sendRate.reset();
         StateRecord rec;
         parseStateRecord(o.value(QStringLiteral("state")).toObject(), rec);
         rec.recvRealMs = recvReal;
@@ -117,8 +121,20 @@ void SimConn::onText(const QString &text)
         m_states.push_back(rec);
         emit stateAccepted(rec);
     } else if (type == QLatin1String("pong")) {
-        m_clock.addSample(o.value(QStringLiteral("t0")).toDouble(), o.value(QStringLiteral("t1")).toDouble(),
-                          o.value(QStringLiteral("t2")).toDouble(), t3);
+        m_sched.pongReceived();
+        const double t0 = o.value(QStringLiteral("t0")).toDouble();
+        const double t1 = o.value(QStringLiteral("t1")).toDouble();
+        const double t2 = o.value(QStringLiteral("t2")).toDouble();
+        if (m_clock.addSample(t0, t1, t2, t3)) {
+            if (const auto d = m_sched.onPong(m_clock, (t3 - t0) - (t2 - t1), t3)) {
+                if (!m_pingTimer.isActive() || m_pingTimer.remainingTime() > *d)
+                    m_pingTimer.start(*d);
+            }
+        }
+        if (m_pingHeld && m_sched.mayPing()) {  // the stall is over: don't wait for the retry timer
+            m_pingTimer.stop();
+            sendPing();
+        }
     } else if (type == QLatin1String("error")) {
         emit failed(QStringLiteral("%1: server error %2: %3")
                         .arg(m_name, o.value(QStringLiteral("code")).toString(), o.value(QStringLiteral("message")).toString()));
@@ -129,9 +145,15 @@ void SimConn::sendPing()
 {
     if (!m_inRoom)
         return;
+    if (!m_sched.mayPing() || !m_sendRate.pingAllowed(realNowMs())) {  // busy second: stay under the server's rate limit
+        m_pingHeld = true;
+        m_pingTimer.start(50);
+        return;
+    }
+    m_pingHeld = false;
     send(QJsonObject{{kType, QStringLiteral("ping")}, {QStringLiteral("t0"), localNow()}});
     ++m_pingsSent;
-    m_pingTimer.start(static_cast<int>(pingIntervalMs(m_pingsSent)));
+    m_pingTimer.start(nextPingDelayMs(m_pingsSent));
 }
 
 // ---- SimClient --------------------------------------------------------------------
@@ -274,7 +296,7 @@ void SimClient::tick()
         m_seekObserved = true;
     s.buffering = m_buffering;
     s.currentSpeed = m_speed;
-    s.fileLoaded = true;
+    s.fileLoaded = clockUsable();  // an unready clock counts like a file that isn't loaded (as in the app)
 
     const couchsync::SyncActions a = m_engine.tick(s);
 
@@ -295,6 +317,8 @@ void SimClient::tick()
 
     const bool ready = (a.status == MemberStatus::Ready);
     if (!m_lastReady || *m_lastReady != ready || now - m_lastStatusAt >= 1000) {
+        if (!m_lastReady || *m_lastReady != ready)
+            m_readyHistory.push_back({now, ready});
         m_lastReady = ready;
         m_lastStatusAt = now;
         sendStatus(ready, s.localPos, a.driftS.value_or(0.0));

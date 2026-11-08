@@ -63,12 +63,19 @@ public:
     static constexpr double kSlopePriorPpm = 300;    // prior on the skew (1 sigma)
     static constexpr double kSlopeMinErrMs = 5;      // no sample counts as better than this for the slope's shrinkage
     static constexpr double kMaxSlopePpm = 1000;     // |skew| clamp
+    static constexpr std::size_t kReadySamples = 3;  // see isReady()
+    static constexpr double kReadyRttFactor = 1.5;   // ...clean = rtt <= best * 1.5 + 10 ms
+    static constexpr double kReadyRttSlackMs = 10;
 
     // Returns false (and ignores the sample) if the values are non-finite or the
     // RTT is negative.
     bool addSample(double t0, double t1, double t2, double t3);
 
     bool hasEstimate() const { return m_count > 0; }
+    // True once at least kReadySamples samples in the window are clean: not flagged as
+    // head-of-line-blocked and with rtt <= best RTT * kReadyRttFactor + kReadyRttSlackMs.
+    // Until then the estimate may rest on a stalled burst and be hundreds of ms off.
+    bool isReady() const;
     // ms, server - local, at local steady time localMs. 0 until hasEstimate().
     double offsetAt(double localMs) const { return m_ym + m_b * (localMs - m_tm); }
     // Offset at the newest sample's midpoint (for display/logging).

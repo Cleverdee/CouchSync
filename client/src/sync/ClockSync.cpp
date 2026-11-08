@@ -40,6 +40,18 @@ bool ClockSync::addSample(double t0, double t1, double t2, double t3)
     return true;
 }
 
+bool ClockSync::isReady() const
+{
+    const double limit = m_rtt * kReadyRttFactor + kReadyRttSlackMs;
+    std::size_t clean = 0;
+    for (std::size_t i = 0; i < m_count; ++i) {
+        const Sample &s = m_samples[i];  // order is irrelevant here
+        if (!s.queued && s.rtt <= limit)
+            ++clean;
+    }
+    return clean >= kReadySamples;
+}
+
 void ClockSync::recompute()
 {
     const std::size_t start = (m_next + kWindow - m_count) % kWindow;

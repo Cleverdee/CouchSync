@@ -1,6 +1,7 @@
 # Qt-free sync core: clock sync, room state, drift controller.
 add_library(couchsync_sync STATIC
   ClockSync.h ClockSync.cpp
+  PingSchedule.h
   RoomState.h
   SyncEngine.h SyncEngine.cpp
 )

@@ -196,7 +196,9 @@ void SyncController::onTick()
         m_seekObserved = true;
     s.buffering = m_player->buffering();
     s.currentSpeed = m_player->speed();
-    s.fileLoaded = m_player->fileLoaded() && !m_loading;
+    // An unready clock (e.g. the join burst got stalled) is treated like a file that isn't loaded:
+    // report `waiting` and don't start anything until the estimate can be trusted.
+    s.fileLoaded = m_player->fileLoaded() && !m_loading && m_room->clockReady();
 
     const couchsync::SyncActions a = m_engine.tick(s);
 

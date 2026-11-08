@@ -66,7 +66,7 @@ jobs:
             }
             if (-not $up) { throw 'room server did not start' }
             $sim = Start-Process "$PWD/client/build/windows-msvc/Release/couchsync_sim.exe" `
-              -ArgumentList '--server', 'ws://127.0.0.1:8787/ws' -PassThru -NoNewWindow
+              -ArgumentList '--server', 'ws://127.0.0.1:8787/ws', '--seed', '1' -PassThru -NoNewWindow
             if (-not $sim.WaitForExit(180000)) { $sim.Kill(); throw 'couchsync_sim timed out' }
             if ($sim.ExitCode -ne 0) { throw "couchsync_sim failed (exit code $($sim.ExitCode))" }
           }
