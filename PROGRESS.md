@@ -37,7 +37,7 @@
 - CLI for testing: `couchsync [file] --server URL --create NAME | --join CODE NAME [--password PW] [--log-sync]`. Run the server with `cd server && npm start` (port 8787).
 - Also done: speed retarget rate-limit (fixed stuck −25 ms drift); skew-aware ClockSync (weighted LSQ fit, <2 ms error); adaptive ping burst and clock-ready gating (`PingSchedule`); `jumpSeekThresholdS` 0.25 s; headless simulator `couchsync_sim` in CI (`--seed 1`). Default scenario passes 30/30 seeds, worst steady p95 33 ms.
 - Next:
-  1. User manual test: two instances on one PC with the same file (Ctrl+D drift readout).
+  1. ~~User manual test: two instances on one PC~~ — passed 2026-11-09 (user: "works well").
   2. Two-PC test over the internet. This needs a reachable server (port-forward, tunnel, or VPS).
   3. Swap WsConn for QtWebSockets (needs the user's OK for the download).
   4. Optional: smoother local position estimate (mpv time-pos has ~10 ms steps and ±15 ms jitter).
