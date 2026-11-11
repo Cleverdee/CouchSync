@@ -35,7 +35,8 @@ ApplicationWindow {
     visible: true
     color: "black"
     title: (mpv.mediaTitle !== "" ? mpv.mediaTitle + " - " : "")
-           + (roomClient.connected ? "Room " + roomClient.roomCode + " - " : "") + "CouchSync"
+           + (roomClient.connected ? "Room " + roomClient.roomCode + " - " : "")
+           + (mpv.mediaTitle !== "" ? "CouchSync" : "CouchSync " + Qt.application.version)
 
     palette {
         window: Theme.bg

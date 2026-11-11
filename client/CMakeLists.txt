@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
-project(couchsync VERSION 0.0.1 LANGUAGES CXX)
+project(couchsync VERSION 0.2.0 LANGUAGES CXX)
+
+# App version shown in the UI and sent in hello.client. The release workflow overrides it
+# with -DCOUCHSYNC_VERSION=x.y.z taken from the tag vX.Y.Z.
+if(NOT COUCHSYNC_VERSION)
+  set(COUCHSYNC_VERSION "${PROJECT_VERSION}")
+endif()
+message(STATUS "CouchSync version: ${COUCHSYNC_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,6 +91,8 @@ target_link_libraries(couchsync PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Q
 # src/player and src/net are needed because the generated qmltyperegistrations.cpp includes headers by basename.
 # (Qt WebSockets is not installed locally; src/net/WsConn is a small QSslSocket-based client with a QWebSocket-like API.)
 target_include_directories(couchsync PRIVATE src src/player src/net)
+
+target_compile_definitions(couchsync PRIVATE COUCHSYNC_VERSION_STR="${COUCHSYNC_VERSION}")
 
 if(MSVC)
   target_compile_options(couchsync PRIVATE /utf-8 /W4)

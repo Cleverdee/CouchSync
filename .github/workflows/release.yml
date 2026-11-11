@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $v = '${{ github.ref_name }}'.TrimStart('v')
+          if ($v -notmatch '^\d+\.\d+\.\d+') { throw "tag '${{ github.ref_name }}' is not vX.Y.Z" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "prerelease=$($v.StartsWith('0.').ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Fetch libmpv
+        shell: pwsh
+        run: ./client/tools/fetch-mpv.ps1
+
+      - name: Configure
+        working-directory: client
+        run: cmake --preset windows-msvc -DCOUCHSYNC_VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Build
+        working-directory: client
+        run: cmake --build --preset windows-msvc-release
+
+      - name: Test
+        working-directory: client
+        run: ctest --test-dir build/windows-msvc -C Release --output-on-failure
+
+      # Stages runtime files only, runs `couchsync.exe --check-tls` on the staged copy (fails the job if
+      # TLS is unsupported), then zips and writes SHA256SUMS.txt.
+      - name: Package
+        shell: pwsh
+        run: ./client/tools/package-win.ps1 -Version '${{ steps.ver.outputs.version }}' -OutDir "$env:RUNNER_TEMP/dist"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ runner.temp }}/dist/CouchSync-${{ steps.ver.outputs.version }}-win64.zip
+            ${{ runner.temp }}/dist/SHA256SUMS.txt
+          generate_release_notes: true
+          prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true

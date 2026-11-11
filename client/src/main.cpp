@@ -4,6 +4,8 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QSslSocket>
+#include <QTextStream>
 
 #include <clocale>
 
@@ -16,11 +18,26 @@ int main(int argc, char *argv[])
     // Used for QStandardPaths::AppDataLocation (watch-later positions live there).
     QCoreApplication::setOrganizationName(QStringLiteral("CouchSync"));
     QCoreApplication::setApplicationName(QStringLiteral("CouchSync"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(COUCHSYNC_VERSION_STR));
+
+    // --check-tls: print the TLS backend and exit 0 if wss:// can work, 1 otherwise (release/support check).
+    if (app.arguments().contains(QLatin1String("--check-tls"))) {
+        const bool ok = QSslSocket::supportsSsl();
+        QTextStream out(stdout);
+        out << "CouchSync " << QCoreApplication::applicationVersion() << "\n"
+            << "TLS active backend: " << QSslSocket::activeBackend() << "\n"
+            << "TLS available backends: " << QSslSocket::availableBackends().join(QStringLiteral(", ")) << "\n"
+            << "supportsSsl: " << (ok ? "true" : "false") << "\n"
+            << "TLS library: " << QSslSocket::sslLibraryVersionString() << "\n";
+        out.flush();
+        return ok ? 0 : 1;
+    }
+
     QQuickStyle::setStyle(QStringLiteral("Basic")); // restyled dark in QML (see Theme.qml)
     // Qt resets the locale on startup; libmpv requires the C numeric locale.
     std::setlocale(LC_NUMERIC, "C");
 
-    // Command line: [file] [--server URL] [--create NAME | --join CODE NAME] [--password PW] [--log-sync]
+    // Command line: [file] [--server URL] [--create NAME | --join CODE NAME] [--password PW] [--log-sync] | --check-tls
     // (the room flags exist for test automation and dev convenience).
     QString startupFile;
     QString cliServer, cliCreateName, cliJoinCode, cliJoinName, cliPassword;

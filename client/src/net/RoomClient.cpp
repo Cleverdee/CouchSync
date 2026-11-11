@@ -201,7 +201,7 @@ void RoomClient::onOpened()
     QJsonObject hello{
         {QStringLiteral("type"), QStringLiteral("hello")},
         {QStringLiteral("protocol"), kProtocol},
-        {QStringLiteral("client"), QStringLiteral("couchsync/0.1.0")},
+        {QStringLiteral("client"), QStringLiteral("couchsync/" COUCHSYNC_VERSION_STR)},
         {QStringLiteral("name"), m_helloName},
         {QStringLiteral("room"), m_helloRoom.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(m_helloRoom)},
     };

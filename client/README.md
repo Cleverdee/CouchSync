@@ -24,6 +24,12 @@ Space toggles pause. The console shows mpv logs and a `hwdec-current:` line so y
 
 Linux/macOS: install libmpv development files (pkg-config `mpv`) and Qt 6.5+, then configure with plain CMake.
 
+## Releases
+
+Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: it builds with `-DCOUCHSYNC_VERSION=X.Y.Z`, runs ctest, stages the runtime files with `tools/package-win.ps1` (exe, `libmpv-2.dll`, Qt DLLs, `plugins`, `qml`, LICENSE, README.txt), checks `couchsync.exe --check-tls` on the staged copy, and publishes `CouchSync-X.Y.Z-win64.zip` plus `SHA256SUMS.txt` as a GitHub Release (marked prerelease while the version is `0.x`). The default version in `CMakeLists.txt` is the `project()` VERSION.
+
+Local dry run: `powershell -File client\tools\package-win.ps1 -Version 0.2.0 -OutDir <dir>` (after a Release build). Wss:// needs `tls/qschannelbackend.dll` next to the exe (windeployqt copies it); `couchsync.exe --check-tls` prints the TLS backend and exits 0 if TLS works.
+
 ## Sync simulator (`couchsync_sim`)
 
 Headless console app (Qt Core/Network only, no GUI, no libmpv) that runs fake clients against a real room server in real time and asserts sync quality against ground truth. Built by default (`-DCOUCHSYNC_BUILD_SIM=OFF` to skip); it also builds on its own: `cmake --build --preset windows-msvc-release --target couchsync_sim`.
